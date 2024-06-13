@@ -58,12 +58,17 @@ var (
 
     commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
         // "test": testLinkedMessage,
+        "ping": pingpong,
     }
     commands = []*discordgo.ApplicationCommand{
         // {
         //     Name: "test",
         //     Description: "test command",
         // },
+        {
+            Name: "ping",
+            Description: "pong",
+        },
     }
 )
 
@@ -233,6 +238,18 @@ func DownDiscord(registeredCommands []*discordgo.ApplicationCommand) {
                 log.Panicf("Cannot delete '%v' command: %v", v.Name, err)
             }
         }
+    }
+}
+
+func pingpong(s *discordgo.Session, i *discordgo.InteractionCreate) {
+    err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+        Type: discordgo.InteractionResponseChannelMessageWithSource,
+        Data: &discordgo.InteractionResponseData{
+            Content: "Pong!",
+        },
+    })
+    if err != nil {
+        log.Println("Pingpong Error", err)
     }
 }
 

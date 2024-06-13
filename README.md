@@ -9,6 +9,8 @@
 
 # TODO
 
+- make a proper startup script
+- deploy to vps, or something
 - pass in some flags
 - add a command to post manually.
 
