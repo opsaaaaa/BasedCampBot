@@ -13,6 +13,7 @@
 - deploy to vps, or something
 - pass in some flags
 - add a command to post manually.
+- add live reload, for nicer dev.
 
 
 # Dev

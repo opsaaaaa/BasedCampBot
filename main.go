@@ -45,6 +45,12 @@ type Config struct {
     }
 }
 
+type FeedResult struct {
+    Feed *gofeed.Feed
+    Item *gofeed.Item
+}
+
+
 var (
     dg *discordgo.Session
     config *Config
@@ -58,7 +64,9 @@ var (
 
     commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
         // "test": testLinkedMessage,
-        "ping": pingpong,
+        "ping": cmdPingpong,
+        "checkfeed": cmdCheckfeed,
+        "postlatest": cmdPostlatest,
     }
     commands = []*discordgo.ApplicationCommand{
         // {
@@ -68,6 +76,14 @@ var (
         {
             Name: "ping",
             Description: "pong",
+        },
+        {
+            Name: "checkfeed",
+            Description: "Manually check the feed for a new post.",
+        },
+        {
+            Name: "postlatest",
+            Description: "repost the latest item in the feed.",
         },
     }
 )
@@ -105,7 +121,7 @@ func main() {
 
 func onReady(s *discordgo.Session, event *discordgo.Ready) {
     log.Printf("Logged in as %s", event.User.String())
-    s.UpdateGameStatus(0, config.DiscordBot.Status)
+    _ = s.UpdateGameStatus(0, config.DiscordBot.Status)
 }
 
 func onCronCallback() {
@@ -118,7 +134,7 @@ func onCronCallback() {
 
     for _, item := range feed.Items {
         if !containsString(visitedList, item.GUID) {
-            PostFeedItem(feed, item)
+            _ = PostFeedItem(feed, item)
         }
     }
 
@@ -128,7 +144,46 @@ func onCronCallback() {
     }
 }
 
-func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) {
+
+func QueryAllFeedItems() (*gofeed.Feed, error) {
+    feed, err := GetFeed()
+    if err != nil {
+        log.Println("Error getting feed.", err)
+        return feed, err
+    }
+
+    visitedList = make([]string,0)
+    for _, item := range feed.Items {
+        visitedList = append(visitedList, item.GUID)
+    }
+    return feed, nil
+}
+
+func QueryNewFeedItems() ([]FeedResult, error) {
+    result := make([]FeedResult, 0)
+    feed, err := GetFeed()
+    if err != nil {
+        log.Println("Error getting feed.", err)
+        return result, err
+    }
+
+    for _, item := range feed.Items {
+        if !containsString(visitedList, item.GUID) {
+            result = append(result, FeedResult{
+                Feed: feed,
+                Item: item,
+            })
+        }
+    }
+
+    visitedList = make([]string,0)
+    for _, item := range feed.Items {
+        visitedList = append(visitedList, item.GUID)
+    }
+    return result, nil
+}
+
+func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) error {
     log.Println("Posting.",item.GUID, item.Title)
 
     var body string = ""
@@ -146,7 +201,7 @@ func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) {
     postMsg, err := dg.ForumThreadStart(config.DiscordServer.PostChannelID,title,config.DiscordMsg.ArchiveDuration,body)
     if err != nil {
         log.Println("Error making ForumThread post.", err, title, body)
-        return
+        return err
     }
     log.Println("Created ForumThread post.", postMsg.ID, title, body)
 
@@ -161,9 +216,10 @@ func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) {
 
     if err != nil {
         log.Println("Error sending discord notify message.",err, body)
-        return
+        return err
     }
     log.Println("Created notification message", notifyMsg.ID, body)
+    return nil
 }
 
 
@@ -241,7 +297,62 @@ func DownDiscord(registeredCommands []*discordgo.ApplicationCommand) {
     }
 }
 
-func pingpong(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) {
+    var content string
+    feed, err := QueryAllFeedItems()
+    if err != nil {
+        content = "Can't query feed '"+config.Feed.Url+"'."
+    } else if len(feed.Items) > 0 {
+        item := feed.Items[0]
+        err = PostFeedItem(feed, item)
+        if err != nil {
+            content = content + "Failed '"+ item.Title + "'.\n"
+        } else {
+            content = content + "Posted '"+ item.Title + "'.\n"
+        }
+    } else {
+        content = "No new items in feed to post."
+    }
+    err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+        Type: discordgo.InteractionResponseChannelMessageWithSource,
+        Data: &discordgo.InteractionResponseData{
+            Content: content,
+        },
+    })
+    if err != nil {
+        log.Println("Checkfeed Error", err)
+    }
+}
+
+func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) {
+    var content string
+    feedResults, err := QueryNewFeedItems()
+    if err != nil {
+        content = "Can't query feed '"+config.Feed.Url+"'."
+    } else if len(feedResults) > 0 {
+        for _, feedResult := range feedResults {
+            err = PostFeedItem(feedResult.Feed, feedResult.Item)
+            if err != nil {
+                content = content + "Failed '"+ feedResult.Item.Title + "'.\n"
+            } else {
+                content = content + "Posted '"+ feedResult.Item.Title + "'.\n"
+            }
+        }
+    } else {
+        content = "No new items in feed to post."
+    }
+    err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+        Type: discordgo.InteractionResponseChannelMessageWithSource,
+        Data: &discordgo.InteractionResponseData{
+            Content: content,
+        },
+    })
+    if err != nil {
+        log.Println("Checkfeed Error", err)
+    }
+}
+
+func cmdPingpong(s *discordgo.Session, i *discordgo.InteractionCreate) {
     err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
