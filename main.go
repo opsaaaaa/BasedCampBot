@@ -1,16 +1,16 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"os"
-	"os/signal"
-	"syscall"
+    "fmt"
+    "log"
+    "os"
+    "os/signal"
+    "syscall"
 
-	"github.com/bwmarrin/discordgo"
-	"github.com/go-co-op/gocron/v2"
-	"github.com/mmcdole/gofeed"
-	"github.com/pelletier/go-toml/v2"
+    "github.com/bwmarrin/discordgo"
+    "github.com/go-co-op/gocron/v2"
+    "github.com/mmcdole/gofeed"
+    "github.com/pelletier/go-toml/v2"
 )
 
 const CONFIG_PATH = "env.toml"
@@ -58,15 +58,16 @@ var (
     visitedList []string
 )
 var (
-    // integerOptionMinValue          = 1.0
+    integerOptionMinValue          = 1.0
     // dmPermission                   = false
     // defaultMemberPermissions int64 = discordgo.PermissionManageServer
 
-    commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
+    commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate) error {
         // "test": testLinkedMessage,
         "ping": cmdPingpong,
         "checkfeed": cmdCheckfeed,
         "postlatest": cmdPostlatest,
+        "postnew": cmdPostNewFeed,
     }
     commands = []*discordgo.ApplicationCommand{
         // {
@@ -80,9 +81,23 @@ var (
         {
             Name: "checkfeed",
             Description: "Manually check the feed for a new post.",
+            Options: []*discordgo.ApplicationCommandOption{
+                {
+                    Type:        discordgo.ApplicationCommandOptionInteger,
+                    Name:        "count",
+                    Description: "Number of results to display.",
+                    MinValue:    &integerOptionMinValue,
+                    MaxValue:    15,
+                    Required:    false,
+                },
+            },
         },
         {
             Name: "postlatest",
+            Description: "repost the latest item in the feed.",
+        },
+        {
+            Name: "postnew",
             Description: "repost the latest item in the feed.",
         },
     }
@@ -256,7 +271,10 @@ func InitDiscord() {
 
     dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
         if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
-            h(s, i)
+            err = h(s, i)
+            if err != nil {
+                log.Println("Error "+i.ApplicationCommandData().Name, err)
+            }
         }
     })
     dg.AddHandler(onReady)
@@ -297,7 +315,7 @@ func DownDiscord(registeredCommands []*discordgo.ApplicationCommand) {
     }
 }
 
-func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     var content string
     feed, err := QueryAllFeedItems()
     if err != nil {
@@ -313,18 +331,60 @@ func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) {
     } else {
         content = "No new items in feed to post."
     }
-    err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+    return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
             Content: content,
         },
     })
-    if err != nil {
-        log.Println("Checkfeed Error", err)
-    }
 }
 
-func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+    var maxCount = 3
+    for _, opt := range i.ApplicationCommandData().Options {
+        switch opt.Name {
+            case "count":
+                maxCount = int(opt.IntValue())
+            default:
+        }
+    }
+    var content string
+    feed, err := GetFeed()
+    if err != nil {
+        content = "Can't query feed '"+config.Feed.Url+"'."
+    } else if len(feed.Items) > 0 {
+        for x, item := range feed.Items {
+            if x >= maxCount {
+                break
+            }
+            checkbox := "✅"
+            if !containsString(visitedList, item.GUID) {
+                checkbox = "🔴"
+            }
+            content = content + fmt.Sprintf(
+                "%d. %s - %s - **%s**. *(%s)*\n",
+                x,
+                checkbox,
+                item.PublishedParsed.Format(config.DiscordMsg.TimeFormat),
+                item.Title,
+                item.GUID,
+            )
+        }
+        if len(feed.Items) > maxCount {
+            content = content + fmt.Sprintf("*%d more...*", len(feed.Items) - maxCount)
+        }
+    } else {
+        content = "No items in feed."
+    }
+    return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+        Type: discordgo.InteractionResponseChannelMessageWithSource,
+        Data: &discordgo.InteractionResponseData{
+            Content: content,
+        },
+    })
+}
+
+func cmdPostNewFeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     var content string
     feedResults, err := QueryNewFeedItems()
     if err != nil {
@@ -341,27 +401,21 @@ func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) {
     } else {
         content = "No new items in feed to post."
     }
-    err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+    return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
             Content: content,
         },
     })
-    if err != nil {
-        log.Println("Checkfeed Error", err)
-    }
 }
 
-func cmdPingpong(s *discordgo.Session, i *discordgo.InteractionCreate) {
-    err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+func cmdPingpong(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+    return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
             Content: "Pong!",
         },
     })
-    if err != nil {
-        log.Println("Pingpong Error", err)
-    }
 }
 
 // func testLinkedMessage(s *discordgo.Session, i *discordgo.InteractionCreate) {
