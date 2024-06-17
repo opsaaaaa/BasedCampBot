@@ -66,6 +66,7 @@ var (
         // "test": testLinkedMessage,
         "ping": cmdPingpong,
         "checkfeed": cmdCheckfeed,
+        "checkconfig": cmdCheckConfig,
         "postlatest": cmdPostlatest,
         "postnew": cmdPostNewFeed,
     }
@@ -91,6 +92,10 @@ var (
                     Required:    false,
                 },
             },
+        },
+        {
+            Name: "checkconfig",
+            Description: "Check channels, feed source and other config settings.",
         },
         {
             Name: "postlatest",
@@ -339,6 +344,22 @@ func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     })
 }
 
+func cmdCheckConfig(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+    var content string
+    content += fmt.Sprintf("Post to https://discord.com/channels/%s/%s\n", config.DiscordServer.GuildID, config.DiscordServer.PostChannelID)
+    content += fmt.Sprintf("Notify to https://discord.com/channels/%s/%s\n", config.DiscordServer.GuildID, config.DiscordServer.NotifyChannelID)
+    content += fmt.Sprintf("Feed Source `%s`\n", config.Feed.Url)
+    content += fmt.Sprintf("Cron Schedule `%s`\n", config.Feed.CronSchedule)
+    content += fmt.Sprintf("Notify Prefix `%s`\n", config.DiscordMsg.NotifyPrefix)
+    content += fmt.Sprintf("TimeFormat `%s`\n", config.DiscordMsg.TimeFormat)
+    return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+        Type: discordgo.InteractionResponseChannelMessageWithSource,
+        Data: &discordgo.InteractionResponseData{
+            Content: content,
+        },
+    })
+}
+
 func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     var maxCount = 3
     for _, opt := range i.ApplicationCommandData().Options {
@@ -371,7 +392,7 @@ func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
             )
         }
         if len(feed.Items) > maxCount {
-            content = content + fmt.Sprintf("*%d more...*", len(feed.Items) - maxCount)
+            content += fmt.Sprintf("*%d more...*", len(feed.Items) - maxCount)
         }
     } else {
         content = "No items in feed."
