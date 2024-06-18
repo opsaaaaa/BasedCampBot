@@ -1,19 +1,18 @@
 package main
 
 import (
-    "fmt"
-    "log"
-    "os"
-    "os/signal"
-    "syscall"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
-    "github.com/bwmarrin/discordgo"
-    "github.com/go-co-op/gocron/v2"
-    "github.com/mmcdole/gofeed"
-    "github.com/pelletier/go-toml/v2"
+	"github.com/bwmarrin/discordgo"
+	"github.com/go-co-op/gocron/v2"
+	"github.com/mmcdole/gofeed"
+	"github.com/pelletier/go-toml/v2"
 )
-
-const CONFIG_PATH = "env.toml"
 
 type Config struct {
     RemoveCommands bool
@@ -117,11 +116,11 @@ func init() {
 func main() {
     err := dg.Open()
     if err != nil {
-        fmt.Println("Error opening connection,", err)
+        log.Println("Error opening connection,", err)
         return
     }
     defer dg.Close()
-    fmt.Println("Discord Connected!")
+    log.Println("Discord Connected!")
     registeredCommands := UpDiscord()
 
     InitFeed()
@@ -131,7 +130,7 @@ func main() {
     defer schdl.Shutdown()
 
     // Wait here until CTRL-C or other term signal is received.
-    fmt.Println("Bot is now running. Press CTRL-C to exit.")
+    log.Println("Bot is now running. Press CTRL-C to exit.")
     sc := make(chan os.Signal, 1)
     signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
     <-sc
@@ -382,7 +381,7 @@ func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
             if !containsString(visitedList, item.GUID) {
                 checkbox = "🔴"
             }
-            content = content + fmt.Sprintf(
+            content += fmt.Sprintf(
                 "%d. %s - %s - **%s**. *(%s)*\n",
                 x,
                 checkbox,
@@ -472,7 +471,10 @@ func GetFeed() (*gofeed.Feed, error) {
 }
 
 func GetConfig() *Config {
-    file, err := os.ReadFile(CONFIG_PATH)
+    var configPath string
+    flag.StringVar(&configPath, "config", "env.toml", "Path to the configuration file")
+    flag.Parse()
+    file, err := os.ReadFile(configPath)
     if err != nil {
         log.Fatal(err)
     }
@@ -482,6 +484,8 @@ func GetConfig() *Config {
     if err != nil {
         log.Fatal(err)
     }
+
+    log.Println("Loaded config")
     return &config
 }
 
