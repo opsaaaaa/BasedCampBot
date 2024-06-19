@@ -1,19 +1,20 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
+    "flag"
+    "fmt"
+    "io"
+    "log"
+    "net/http"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
 
-	"github.com/bwmarrin/discordgo"
-	"github.com/go-co-op/gocron/v2"
-	"github.com/mmcdole/gofeed"
-	"github.com/pelletier/go-toml/v2"
+    "github.com/bwmarrin/discordgo"
+    "github.com/go-co-op/gocron/v2"
+    "github.com/mmcdole/gofeed"
+    "github.com/pelletier/go-toml/v2"
 )
 
 type Config struct {
@@ -22,6 +23,7 @@ type Config struct {
         Url string
         Type string
         CronSchedule string
+        PostInterval int
         NoCache bool
     }
     DiscordBot struct {
@@ -58,6 +60,7 @@ var (
     config *Config
     schdl gocron.Scheduler
     visitedList []string
+    lastPublished time.Time
 )
 var (
     integerOptionMinValue          = 1.0
@@ -91,6 +94,12 @@ var (
                     Description: "Number of results to display.",
                     MinValue:    &integerOptionMinValue,
                     MaxValue:    15,
+                    Required:    false,
+                },
+                {
+                    Type:        discordgo.ApplicationCommandOptionBoolean,
+                    Name:        "header",
+                    Description: "Display the header?",
                     Required:    false,
                 },
             },
@@ -148,6 +157,14 @@ func onReady(s *discordgo.Session, event *discordgo.Ready) {
 
 func onCronCallback() {
     log.Println("Cron Callback")
+
+    if !time.Now().After(lastPublished.Add(
+        time.Duration(config.Feed.PostInterval) * time.Hour,
+    )) {
+        log.Println("Skipped check outside of post interval")
+        return
+    }
+
     feed, err := GetFeed()
     if err != nil {
         log.Println("Error getting feed.", err)
@@ -222,10 +239,12 @@ func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) error {
 
     postMsg, err := dg.ForumThreadStart(config.DiscordServer.PostChannelID,title,config.DiscordMsg.ArchiveDuration,body)
     if err != nil {
-        log.Println("Error making ForumThread post.", err, title, body)
+        log.Println("Error making ForumThread post.", err, title)
         return err
     }
-    log.Println("Created ForumThread post.", postMsg.ID, title, body)
+    log.Printf("Created ForumThread post. '%s' [%s] (%s)", title, postMsg.ID, item.GUID)
+
+    lastPublished = *item.PublishedParsed
 
     body = truncateString(
         config.DiscordMsg.NotifyPrefix + " " +
@@ -253,6 +272,9 @@ func InitFeed() {
     visitedList = make([]string,0)
     for _, item := range feed.Items {
         visitedList = append(visitedList, item.GUID)
+        if item.PublishedParsed.After(lastPublished) {
+            lastPublished = *item.PublishedParsed
+        }
     }
     log.Println("Added visitedList.", visitedList)
 }
@@ -367,18 +389,32 @@ func cmdCheckConfig(s *discordgo.Session, i *discordgo.InteractionCreate) error 
 func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     logCmd("./checkfeed", i)
     var maxCount = 3
+    var showHeader = false
     for _, opt := range i.ApplicationCommandData().Options {
         switch opt.Name {
             case "count":
                 maxCount = int(opt.IntValue())
+            case "header":
+                showHeader = bool(opt.BoolValue())
             default:
         }
     }
     var content string
-    feed, err := GetFeed()
+    body, header, err := RequestFeed()
+    var feed *gofeed.Feed
+    if err == nil {
+        feed, err = ParseFeed(string(body))
+    }
     if err != nil {
         content = "Can't query feed '"+config.Feed.Url+"'."
     } else if len(feed.Items) > 0 {
+        if showHeader {
+            content += "```\n"
+            for key, val := range header {
+                content += fmt.Sprintf("%v: %v\n", key, val)
+            }
+            content += "```\n"
+        }
         for x, item := range feed.Items {
             if x >= maxCount {
                 break
@@ -480,33 +516,40 @@ func logCmd(cmd string,i *discordgo.InteractionCreate) {
 // }
 
 func GetFeed() (feed *gofeed.Feed, err error) {
-    fp := gofeed.NewParser()
-
-    if config.Feed.NoCache {
-        client := &http.Client{}
-        req, err := http.NewRequest("GET", config.Feed.Url, nil)
-        if err != nil {
-            return feed, err
-        }
-        req.Header.Set("Pragma", "no-cache")
-        req.Header.Set("Cache-Control", "no-cache")
-
-        resp, err := client.Do(req)
-        if err != nil {
-            return feed, err
-        }
-        defer resp.Body.Close()
-
-        body, err := io.ReadAll(resp.Body)
-        if err != nil {
-            return feed, err
-        }
-        feed, err = fp.ParseString(string(body))
-        return feed, err
-    } else {
-        feed, err = fp.ParseURL(config.Feed.Url)
+    body, _, err := RequestFeed()
+    if err != nil {
         return feed, err
     }
+    return ParseFeed(string(body))
+}
+
+func RequestFeed() (body []byte, header http.Header, err error) {
+    client := &http.Client{}
+    req, err := http.NewRequest("GET", config.Feed.Url, nil)
+    if err != nil {
+        return body, header, err
+    }
+    if config.Feed.NoCache {
+        req.Header.Set("Pragma", "no-cache")
+        req.Header.Set("Cache-Control", "no-cache")
+    }
+    resp, err := client.Do(req)
+    if err != nil {
+        return body, header, err
+    }
+    defer resp.Body.Close()
+
+    header = resp.Header
+
+    body, err = io.ReadAll(resp.Body)
+    return body, header, err
+}
+
+func ParseFeed(body string) (feed *gofeed.Feed, err error) {
+    fp := gofeed.NewParser()
+    feed, err = fp.ParseString(body)
+    // feed, err = fp.ParseURL(config.Feed.Url)
+    return feed, err
 }
 
 func GetConfig() *Config {
