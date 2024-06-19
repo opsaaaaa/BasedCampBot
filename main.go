@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"sort"
 	"syscall"
 	"time"
 
