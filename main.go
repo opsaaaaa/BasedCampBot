@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,6 +22,7 @@ type Config struct {
         Url string
         Type string
         CronSchedule string
+        NoCache bool
     }
     DiscordBot struct {
         Username string
@@ -476,13 +479,34 @@ func logCmd(cmd string,i *discordgo.InteractionCreate) {
 //     }
 // }
 
-func GetFeed() (*gofeed.Feed, error) {
+func GetFeed() (feed *gofeed.Feed, err error) {
     fp := gofeed.NewParser()
-    feed, err := fp.ParseURL(config.Feed.Url)
-    if err != nil {
-        log.Println(err)
+
+    if config.Feed.NoCache {
+        client := &http.Client{}
+        req, err := http.NewRequest("GET", config.Feed.Url, nil)
+        if err != nil {
+            return feed, err
+        }
+        req.Header.Set("Pragma", "no-cache")
+        req.Header.Set("Cache-Control", "no-cache")
+
+        resp, err := client.Do(req)
+        if err != nil {
+            return feed, err
+        }
+        defer resp.Body.Close()
+
+        body, err := io.ReadAll(resp.Body)
+        if err != nil {
+            return feed, err
+        }
+        feed, err = fp.ParseString(string(body))
+        return feed, err
+    } else {
+        feed, err = fp.ParseURL(config.Feed.Url)
+        return feed, err
     }
-    return feed, err
 }
 
 func GetConfig() *Config {
