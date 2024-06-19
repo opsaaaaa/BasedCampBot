@@ -75,6 +75,7 @@ var (
         "checkconfig": cmdCheckConfig,
         "postlatest": cmdPostlatest,
         "postnew": cmdPostNewFeed,
+        "checksleep": cmdCheckSleep,
     }
     commands = []*discordgo.ApplicationCommand{
         // {
@@ -84,6 +85,10 @@ var (
         {
             Name: "ping",
             Description: "pong",
+        },
+        {
+            Name: "checksleep",
+            Description: "Check when the bot will start checking for the next episode.",
         },
         {
             Name: "checkfeed",
@@ -484,6 +489,53 @@ func cmdPingpong(s *discordgo.Session, i *discordgo.InteractionCreate) error {
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
             Content: "Pong!",
+        },
+    })
+}
+
+func cmdCheckSleep(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+    logCmd("./checksleep", i)
+    // HERE
+    sleepuntil := lastPublished.Add(
+        time.Duration(config.Feed.PostInterval) * time.Hour,
+    )
+    now := time.Now()
+    content := ""
+    if now.After(sleepuntil) {
+        content += fmt.Sprintf(
+            "☀️  Waiting for new posts since `%s`, `%v` hours ago.\n", 
+            sleepuntil.Format(time.RFC822Z),
+            now.Sub(sleepuntil).Hours(),
+        )
+    } else {
+        content += fmt.Sprintf(
+            "🌜 Sleeping until `%s` in `%.2f` hours.\n",
+            sleepuntil.Format(time.RFC822Z),
+            sleepuntil.Sub(now).Hours(),
+        )
+    }
+
+    content +=
+        "\nCron Job Schedule\n"+
+        "```\n"+
+        config.Feed.CronSchedule+"\n"+
+        "* * * * * *\n"+
+        "| | | | | +----- day of the week (0 - 7) (Sunday is 0 and 7)\n"+
+        "| | | | +------- month (1 - 12)\n"+
+        "| | | +--------- day of the month (1 - 31)\n"+
+        "| | +----------- hour (0 - 23)\n"+
+        "| +------------- minute (0 - 59)\n"+
+        "+--------------- second (0 - 59)\n"+
+        "```\n"
+
+    // if !time.Now().After(lastPublished.Add(
+    //     time.Duration(config.Feed.PostInterval) * time.Hour,
+    // if 
+
+    return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+        Type: discordgo.InteractionResponseChannelMessageWithSource,
+        Data: &discordgo.InteractionResponseData{
+            Content: content,
         },
     })
 }
