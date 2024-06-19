@@ -335,6 +335,7 @@ func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     } else {
         content = "No new items in feed to post."
     }
+    log.Printf("%s ran ./postlatest", i.User.Username)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -351,6 +352,7 @@ func cmdCheckConfig(s *discordgo.Session, i *discordgo.InteractionCreate) error 
     content += fmt.Sprintf("Cron Schedule `%s`\n", config.Feed.CronSchedule)
     content += fmt.Sprintf("Notify Prefix `%s`\n", config.DiscordMsg.NotifyPrefix)
     content += fmt.Sprintf("TimeFormat `%s`\n", config.DiscordMsg.TimeFormat)
+    log.Printf("%s ran ./checkconfig", i.User.Username)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -396,6 +398,7 @@ func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     } else {
         content = "No items in feed."
     }
+    log.Printf("%s ran ./checkfeed", i.User.Username)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -421,6 +424,7 @@ func cmdPostNewFeed(s *discordgo.Session, i *discordgo.InteractionCreate) error 
     } else {
         content = "No new items in feed to post."
     }
+    log.Printf("%s ran ./postnew with %d items", i.User.Username, len(feedResults))
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -430,6 +434,7 @@ func cmdPostNewFeed(s *discordgo.Session, i *discordgo.InteractionCreate) error 
 }
 
 func cmdPingpong(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+    log.Printf("%s ran ./ping", i.User.Username)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
