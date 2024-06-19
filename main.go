@@ -50,17 +50,15 @@ type Config struct {
     }
 }
 
-type FeedResult struct {
-    Feed *gofeed.Feed
-    Item *gofeed.Item
-}
-
+const VisitedSeen = uint8(0)
+const VisitedInit = uint8(1)
+const VisitedPosted = uint8(2)
 
 var (
     dg *discordgo.Session
     config *Config
     schdl gocron.Scheduler
-    visitedList []string
+    visitedList map[string]uint8
     lastPublished time.Time
 )
 var (
@@ -69,7 +67,6 @@ var (
     // defaultMemberPermissions int64 = discordgo.PermissionManageServer
 
     commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate) error {
-        // "test": testLinkedMessage,
         "ping": cmdPingpong,
         "checkfeed": cmdCheckfeed,
         "checkconfig": cmdCheckConfig,
@@ -78,10 +75,6 @@ var (
         "checksleep": cmdCheckSleep,
     }
     commands = []*discordgo.ApplicationCommand{
-        // {
-        //     Name: "test",
-        //     Description: "test command",
-        // },
         {
             Name: "ping",
             Description: "pong",
@@ -147,7 +140,6 @@ func main() {
     log.Println("Cron Scheduler Started.")
     defer schdl.Shutdown()
 
-    // Wait here until CTRL-C or other term signal is received.
     log.Println("Bot is now running. Press CTRL-C to exit.")
     sc := make(chan os.Signal, 1)
     signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
@@ -178,17 +170,30 @@ func onCronCallback() {
     }
 
     for _, item := range feed.Items {
-        if !containsString(visitedList, item.GUID) {
+        if val, found := visitedList[item.GUID]; !found || val == VisitedSeen {
             _ = PostFeedItem(feed, item)
         }
     }
 
-    visitedList = make([]string,0)
-    for _, item := range feed.Items {
-        visitedList = append(visitedList, item.GUID)
-    }
+    UpdateVisitedList(feed, VisitedSeen)
 }
 
+
+
+func UpdateVisitedList(feed *gofeed.Feed, visitType uint8) {
+    guids := make(map[string]bool,len(feed.Items))
+    for _, item := range feed.Items {
+        guids[item.GUID] = true
+        if _, found := visitedList[item.GUID]; !found {
+            visitedList[item.GUID] = visitType
+        }
+    }
+    for key := range visitedList {
+        if _, found := guids[key]; !found {
+            delete(visitedList, key)
+        }
+    }
+}
 
 func QueryAllFeedItems() (*gofeed.Feed, error) {
     feed, err := GetFeed()
@@ -196,36 +201,23 @@ func QueryAllFeedItems() (*gofeed.Feed, error) {
         log.Println("Error getting feed.", err)
         return feed, err
     }
-
-    visitedList = make([]string,0)
-    for _, item := range feed.Items {
-        visitedList = append(visitedList, item.GUID)
-    }
     return feed, nil
 }
 
-func QueryNewFeedItems() ([]FeedResult, error) {
-    result := make([]FeedResult, 0)
+func QueryNewFeedItems() (*gofeed.Feed, []*gofeed.Item, error) {
+    result := make([]*gofeed.Item, 0)
     feed, err := GetFeed()
     if err != nil {
         log.Println("Error getting feed.", err)
-        return result, err
+        return feed, result, err
     }
 
     for _, item := range feed.Items {
-        if !containsString(visitedList, item.GUID) {
-            result = append(result, FeedResult{
-                Feed: feed,
-                Item: item,
-            })
+        if val, found := visitedList[item.GUID]; !found || val == VisitedSeen {
+            result = append(result, item)
         }
     }
-
-    visitedList = make([]string,0)
-    for _, item := range feed.Items {
-        visitedList = append(visitedList, item.GUID)
-    }
-    return result, nil
+    return feed, result, nil
 }
 
 func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) error {
@@ -251,6 +243,7 @@ func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) error {
     log.Printf("Created ForumThread post. '%s' [%s] (%s)", title, postMsg.ID, item.GUID)
 
     lastPublished = *item.PublishedParsed
+    visitedList[item.GUID] = VisitedPosted
 
     body = truncateString(
         config.DiscordMsg.NotifyPrefix + " " +
@@ -275,13 +268,12 @@ func InitFeed() {
     if err != nil {
         log.Fatalln("Error getting feed.", err)
     }
-    visitedList = make([]string,0)
     for _, item := range feed.Items {
-        visitedList = append(visitedList, item.GUID)
         if item.PublishedParsed.After(lastPublished) {
             lastPublished = *item.PublishedParsed
         }
     }
+    UpdateVisitedList(feed, VisitedInit)
     log.Println("Added visitedList.", visitedList)
 }
 
@@ -367,6 +359,7 @@ func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     } else {
         content = "No new items in feed to post."
     }
+    UpdateVisitedList(feed, VisitedSeen)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -431,7 +424,12 @@ func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
                 break
             }
             checkbox := "✅"
-            if !containsString(visitedList, item.GUID) {
+            val, found := visitedList[item.GUID] 
+            if !found {
+                checkbox = "⭕"
+            } else if val == VisitedInit {
+                checkbox = "🔷"
+            } else if val == VisitedSeen {
                 checkbox = "🔴"
             }
             content += fmt.Sprintf(
@@ -460,21 +458,22 @@ func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 func cmdPostNewFeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     logCmd("./postnew", i)
     var content string
-    feedResults, err := QueryNewFeedItems()
+    feed, items, err := QueryNewFeedItems()
     if err != nil {
         content = "Can't query feed '"+config.Feed.Url+"'."
-    } else if len(feedResults) > 0 {
-        for _, feedResult := range feedResults {
-            err = PostFeedItem(feedResult.Feed, feedResult.Item)
+    } else if len(items) > 0 {
+        for _, item := range items {
+            err = PostFeedItem(feed, item)
             if err != nil {
-                content = content + "Failed '"+ feedResult.Item.Title + "'.\n"
+                content = content + "Failed '"+ item.Title + "'.\n"
             } else {
-                content = content + "Posted '"+ feedResult.Item.Title + "'.\n"
+                content = content + "Posted '"+ item.Title + "'.\n"
             }
         }
     } else {
         content = "No new items in feed to post."
     }
+    UpdateVisitedList(feed, VisitedSeen)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -495,7 +494,6 @@ func cmdPingpong(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 
 func cmdCheckSleep(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     logCmd("./checksleep", i)
-    // HERE
     sleepuntil := lastPublished.Add(
         time.Duration(config.Feed.PostInterval) * time.Hour,
     )
@@ -527,10 +525,6 @@ func cmdCheckSleep(s *discordgo.Session, i *discordgo.InteractionCreate) error {
         "| +------------- minute (0 - 59)\n"+
         "+--------------- second (0 - 59)\n"+
         "```\n"
-
-    // if !time.Now().After(lastPublished.Add(
-    //     time.Duration(config.Feed.PostInterval) * time.Hour,
-    // if 
 
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -604,15 +598,6 @@ func GetConfig() *Config {
 
     log.Println("Loaded config")
     return &config
-}
-
-func containsString(haystack []string, needle string) bool {
-    for _, v := range haystack {
-        if v == needle {
-            return true
-        }
-    }
-    return false
 }
 
 func truncateString(body string, maxLen int) string {
