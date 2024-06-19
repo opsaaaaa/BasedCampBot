@@ -550,29 +550,6 @@ func logCmd(cmd string,i *discordgo.InteractionCreate) {
     log.Printf("%s ran %s", username, cmd)
 }
 
-// func testLinkedMessage(s *discordgo.Session, i *discordgo.InteractionCreate) {
-//     s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-//         Type: discordgo.InteractionResponseChannelMessageWithSource,
-//         Data: &discordgo.InteractionResponseData{
-//             Content: "Hey there! Congratulations, you just executed your first slash command",
-//         },
-//     })
-//     msg, err := s.ChannelMessageSend(config.DiscordServer.PostChannelID, "Test Post ...")
-//     if err != nil {
-//         log.Println("error sending discord post message.",err)
-//         return
-//     }
-//     msg, err = s.ChannelMessageSend(config.DiscordServer.NotifyChannelID, 
-//         "Test Notify https://discord.com/channels/"+
-//         config.DiscordServer.GuildID+
-//         "/"+msg.ChannelID+"/"+msg.ID,
-//     )
-//     if err != nil {
-//         log.Println("error sending discord notify message.",err)
-//         return
-//     }
-// }
-
 func GetFeed() (feed *gofeed.Feed, err error) {
     body, _, err := RequestFeed()
     if err != nil {
