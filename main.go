@@ -320,6 +320,7 @@ func DownDiscord(registeredCommands []*discordgo.ApplicationCommand) {
 }
 
 func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+    logCmd("./postlatest", i)
     var content string
     feed, err := QueryAllFeedItems()
     if err != nil {
@@ -335,7 +336,6 @@ func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     } else {
         content = "No new items in feed to post."
     }
-    log.Printf("%s ran ./postlatest", i.User.Username)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -345,6 +345,7 @@ func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 }
 
 func cmdCheckConfig(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+    logCmd("./checkconfig", i)
     var content string
     content += fmt.Sprintf("Post to https://discord.com/channels/%s/%s\n", config.DiscordServer.GuildID, config.DiscordServer.PostChannelID)
     content += fmt.Sprintf("Notify to https://discord.com/channels/%s/%s\n", config.DiscordServer.GuildID, config.DiscordServer.NotifyChannelID)
@@ -352,7 +353,6 @@ func cmdCheckConfig(s *discordgo.Session, i *discordgo.InteractionCreate) error 
     content += fmt.Sprintf("Cron Schedule `%s`\n", config.Feed.CronSchedule)
     content += fmt.Sprintf("Notify Prefix `%s`\n", config.DiscordMsg.NotifyPrefix)
     content += fmt.Sprintf("TimeFormat `%s`\n", config.DiscordMsg.TimeFormat)
-    log.Printf("%s ran ./checkconfig", i.User.Username)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -362,6 +362,7 @@ func cmdCheckConfig(s *discordgo.Session, i *discordgo.InteractionCreate) error 
 }
 
 func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+    logCmd("./checkfeed", i)
     var maxCount = 3
     for _, opt := range i.ApplicationCommandData().Options {
         switch opt.Name {
@@ -398,7 +399,6 @@ func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     } else {
         content = "No items in feed."
     }
-    log.Printf("%s ran ./checkfeed", i.User.Username)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -408,6 +408,7 @@ func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 }
 
 func cmdPostNewFeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+    logCmd("./postnew", i)
     var content string
     feedResults, err := QueryNewFeedItems()
     if err != nil {
@@ -424,7 +425,6 @@ func cmdPostNewFeed(s *discordgo.Session, i *discordgo.InteractionCreate) error 
     } else {
         content = "No new items in feed to post."
     }
-    log.Printf("%s ran ./postnew with %d items", i.User.Username, len(feedResults))
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -434,13 +434,23 @@ func cmdPostNewFeed(s *discordgo.Session, i *discordgo.InteractionCreate) error 
 }
 
 func cmdPingpong(s *discordgo.Session, i *discordgo.InteractionCreate) error {
-    log.Printf("%s ran ./ping", i.User.Username)
+    logCmd("./ping", i)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
             Content: "Pong!",
         },
     })
+}
+
+func logCmd(cmd string,i *discordgo.InteractionCreate) {
+    var username string = ""
+    if i.Member != nil {
+        username = i.Member.User.Username
+    } else if i.User != nil {
+        username = i.User.Username
+    }
+    log.Printf("%s ran %s", username, cmd)
 }
 
 // func testLinkedMessage(s *discordgo.Session, i *discordgo.InteractionCreate) {
