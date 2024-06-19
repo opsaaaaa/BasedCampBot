@@ -1,20 +1,22 @@
 package main
 
 import (
-    "flag"
-    "fmt"
-    "io"
-    "log"
-    "net/http"
-    "os"
-    "os/signal"
-    "syscall"
-    "time"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"slices"
+	"sort"
+	"syscall"
+	"time"
 
-    "github.com/bwmarrin/discordgo"
-    "github.com/go-co-op/gocron/v2"
-    "github.com/mmcdole/gofeed"
-    "github.com/pelletier/go-toml/v2"
+	"github.com/bwmarrin/discordgo"
+	"github.com/go-co-op/gocron/v2"
+	"github.com/mmcdole/gofeed"
+	"github.com/pelletier/go-toml/v2"
 )
 
 type Config struct {
@@ -410,8 +412,13 @@ func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     } else if len(feed.Items) > 0 {
         if showHeader {
             content += "```\n"
-            for key, val := range header {
-                content += fmt.Sprintf("%v: %v\n", key, val)
+            keys := make([]string, 0, len(header))
+            for k := range header {
+                keys = append(keys, k)
+            }
+            slices.Sort(keys)
+            for _, key := range keys {
+                content += fmt.Sprintf("%v: %v\n", key, header[key])
             }
             content += "```\n"
         }
