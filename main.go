@@ -18,6 +18,8 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+const VERSION = "0.0.2"
+
 type Config struct {
     RemoveCommands bool
     Feed struct {
@@ -72,7 +74,7 @@ var (
         "checkconfig": cmdCheckConfig,
         "postlatest": cmdPostlatest,
         "postnew": cmdPostNewFeed,
-        "checksleep": cmdCheckSleep,
+        "status": cmdStatus,
     }
     commands = []*discordgo.ApplicationCommand{
         {
@@ -80,7 +82,7 @@ var (
             Description: "pong",
         },
         {
-            Name: "checksleep",
+            Name: "status",
             Description: "Check when the bot will start checking for the next episode.",
         },
         {
@@ -265,6 +267,7 @@ func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) error {
 
 func InitFeed() {
     feed, err := GetFeed()
+    visitedList = make(map[string]uint8, len(feed.Items))
     if err != nil {
         log.Fatalln("Error getting feed.", err)
     }
@@ -298,6 +301,7 @@ func InitDiscord() {
 
     dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
         if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
+            logCmd(i.ApplicationCommandData().Name, i)
             err = h(s, i)
             if err != nil {
                 log.Println("Error "+i.ApplicationCommandData().Name, err)
@@ -343,7 +347,6 @@ func DownDiscord(registeredCommands []*discordgo.ApplicationCommand) {
 }
 
 func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) error {
-    logCmd("./postlatest", i)
     var content string
     feed, err := QueryAllFeedItems()
     if err != nil {
@@ -369,14 +372,25 @@ func cmdPostlatest(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 }
 
 func cmdCheckConfig(s *discordgo.Session, i *discordgo.InteractionCreate) error {
-    logCmd("./checkconfig", i)
     var content string
+    content += "```\n"
     content += fmt.Sprintf("Post to https://discord.com/channels/%s/%s\n", config.DiscordServer.GuildID, config.DiscordServer.PostChannelID)
     content += fmt.Sprintf("Notify to https://discord.com/channels/%s/%s\n", config.DiscordServer.GuildID, config.DiscordServer.NotifyChannelID)
     content += fmt.Sprintf("Feed Source `%s`\n", config.Feed.Url)
-    content += fmt.Sprintf("Cron Schedule `%s`\n", config.Feed.CronSchedule)
     content += fmt.Sprintf("Notify Prefix `%s`\n", config.DiscordMsg.NotifyPrefix)
     content += fmt.Sprintf("TimeFormat `%s`\n", config.DiscordMsg.TimeFormat)
+    content += fmt.Sprintf("Post Interval every `%d` hours", config.Feed.PostInterval)
+    content +=
+        "\nCron Job Schedule\n"+
+        config.Feed.CronSchedule+"\n"+
+        "* * * * * *\n"+
+        "| | | | | +----- day of the week (0 - 7) (Sunday is 0 and 7)\n"+
+        "| | | | +------- month (1 - 12)\n"+
+        "| | | +--------- day of the month (1 - 31)\n"+
+        "| | +----------- hour (0 - 23)\n"+
+        "| +------------- minute (0 - 59)\n"+
+        "+--------------- second (0 - 59)\n"+
+        "```\n"
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
@@ -386,7 +400,6 @@ func cmdCheckConfig(s *discordgo.Session, i *discordgo.InteractionCreate) error 
 }
 
 func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
-    logCmd("./checkfeed", i)
     var maxCount = 3
     var showHeader = false
     for _, opt := range i.ApplicationCommandData().Options {
@@ -456,7 +469,6 @@ func cmdCheckfeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 }
 
 func cmdPostNewFeed(s *discordgo.Session, i *discordgo.InteractionCreate) error {
-    logCmd("./postnew", i)
     var content string
     feed, items, err := QueryNewFeedItems()
     if err != nil {
@@ -483,17 +495,16 @@ func cmdPostNewFeed(s *discordgo.Session, i *discordgo.InteractionCreate) error 
 }
 
 func cmdPingpong(s *discordgo.Session, i *discordgo.InteractionCreate) error {
-    logCmd("./ping", i)
+    content := fmt.Sprintf("Pong! `Version %s`", VERSION)
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
         Data: &discordgo.InteractionResponseData{
-            Content: "Pong!",
+            Content: content,
         },
     })
 }
 
-func cmdCheckSleep(s *discordgo.Session, i *discordgo.InteractionCreate) error {
-    logCmd("./checksleep", i)
+func cmdStatus(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     sleepuntil := lastPublished.Add(
         time.Duration(config.Feed.PostInterval) * time.Hour,
     )
@@ -501,30 +512,43 @@ func cmdCheckSleep(s *discordgo.Session, i *discordgo.InteractionCreate) error {
     content := ""
     if now.After(sleepuntil) {
         content += fmt.Sprintf(
-            "☀️  Waiting for new posts since `%s`, `%v` hours ago.\n", 
+            "⏳ Waiting for new posts since `%s`, `%.2f` hours ago.\n", 
             sleepuntil.Format(time.RFC822Z),
             now.Sub(sleepuntil).Hours(),
         )
     } else {
         content += fmt.Sprintf(
-            "🌜 Sleeping until `%s` in `%.2f` hours.\n",
+            "⏰ Sleeping until `%s` in `%.2f` hours.\n",
             sleepuntil.Format(time.RFC822Z),
             sleepuntil.Sub(now).Hours(),
         )
     }
-
-    content +=
-        "\nCron Job Schedule\n"+
-        "```\n"+
-        config.Feed.CronSchedule+"\n"+
-        "* * * * * *\n"+
-        "| | | | | +----- day of the week (0 - 7) (Sunday is 0 and 7)\n"+
-        "| | | | +------- month (1 - 12)\n"+
-        "| | | +--------- day of the month (1 - 31)\n"+
-        "| | +----------- hour (0 - 23)\n"+
-        "| +------------- minute (0 - 59)\n"+
-        "+--------------- second (0 - 59)\n"+
-        "```\n"
+    content += fmt.Sprintf(
+        "🗓️ Last Published on `%s`, `%.2f` hours ago.\n",
+        lastPublished.Format(time.RFC822Z),
+        now.Sub(lastPublished).Hours(),
+    )
+    var nextRun time.Time
+    var lastRun time.Time
+    for _, job := range schdl.Jobs() {
+        nextRun, _ = job.NextRun()
+        lastRun, _ = job.LastRun()
+        // if err == nil && (nextRun.IsZero() || nextRun.After(jobNextRun)) {
+        //     nextRun = jobNextRun
+        // }
+        // jobLastRun, err := job.LastRun()
+        // if err == nil && (lastRun.IsZero() || lastRun.Before(jobLastRun)) {
+        //     lastRun = jobLastRun
+        // }
+    }
+    content += fmt.Sprintf(
+        "⏮️ Previous check ran at `%s`.\n",
+        lastRun.Format(time.RFC822Z),
+    )
+    content += fmt.Sprintf(
+        "⏭️ Next check scheduled for `%s`.\n",
+        nextRun.Format(time.RFC822Z),
+    )
 
     return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
         Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -541,7 +565,7 @@ func logCmd(cmd string,i *discordgo.InteractionCreate) {
     } else if i.User != nil {
         username = i.User.Username
     }
-    log.Printf("%s ran %s", username, cmd)
+    log.Printf("%s ran ./%s", username, cmd)
 }
 
 func GetFeed() (feed *gofeed.Feed, err error) {
