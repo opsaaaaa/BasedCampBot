@@ -18,7 +18,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const VERSION = "0.0.2"
+const VERSION = "0.0.3"
 
 type Config struct {
     RemoveCommands bool
@@ -35,6 +35,8 @@ type Config struct {
         ClientSecret string
         Token string
         Status string
+        Retries int
+        Logging uint8
     }
     DiscordMsg struct {
         ArchiveDuration int
@@ -56,6 +58,10 @@ const VisitedSeen = uint8(0)
 const VisitedInit = uint8(1)
 const VisitedPosted = uint8(2)
 
+const LoggingNone = uint8(0)
+const LogProd = uint8(1)
+const LogDebug = uint8(2)
+
 var (
     dg *discordgo.Session
     config *Config
@@ -63,6 +69,7 @@ var (
     visitedList map[string]uint8
     lastPublished time.Time
 )
+
 var (
     integerOptionMinValue          = 1.0
     // dmPermission                   = false
@@ -126,48 +133,82 @@ func init() {
     InitScheduler()
 }
 
+func logLvlF(level uint8, format string, v ...any) {
+    if config.DiscordBot.Logging >= level {
+        log.Printf(format, v...)
+    }
+}
+
+func logLvlLn(level uint8, v ...any) {
+    if config.DiscordBot.Logging >= level {
+        log.Println(v...)
+    }
+}
+
+func connectToDiscordWithRetry() error {
+    retryDelay := 5 * time.Second // Base delay between retries
+    for attempt := 0; attempt <= config.DiscordBot.Retries; attempt++ {
+        err := dg.Open()
+        if err == nil {
+            return nil
+        }
+
+        logLvlF(LogDebug, "Connection attempt %d/%d failed: %v", attempt+1, config.DiscordBot.Retries, err)
+
+        if attempt < config.DiscordBot.Retries {
+            // Exponential backoff: 5s, 10s, 20s, etc.
+            sleepTime := retryDelay * time.Duration(1<<uint(attempt))
+            logLvlF(LogDebug, "Waiting %v before next attempt...", sleepTime)
+            time.Sleep(sleepTime)
+        }
+    }
+    return fmt.Errorf("failed to connect to Discord after %d retries", config.DiscordBot.Retries)
+}
+
 func main() {
-    err := dg.Open()
+    err := connectToDiscordWithRetry()
     if err != nil {
-        log.Println("Error opening connection,", err)
+        logLvlLn(LogProd, "Error opening connection after retries:", err)
+        os.Exit(1)
         return
     }
     defer dg.Close()
-    log.Println("Discord Connected!")
+    logLvlLn(LogDebug, "Discord Connected!")
     registeredCommands := UpDiscord()
 
     InitFeed()
 
     schdl.Start()
-    log.Println("Cron Scheduler Started.")
+    logLvlLn(LogDebug, "Cron Scheduler Started.")
     defer schdl.Shutdown()
 
-    log.Println("Bot is now running. Press CTRL-C to exit.")
+    logLvlLn(LogProd, "Bot is now running. Press CTRL-C to exit.")
     sc := make(chan os.Signal, 1)
     signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
     <-sc
 
     DownDiscord(registeredCommands)
+    os.Exit(0)
 }
 
 func onReady(s *discordgo.Session, event *discordgo.Ready) {
-    log.Printf("Logged in as %s", event.User.String())
+    logLvlF(LogProd, "Logged in as %s", event.User.String())
     _ = s.UpdateGameStatus(0, config.DiscordBot.Status)
 }
 
 func onCronCallback() {
-    log.Println("Cron Callback")
+    logLvlLn(LogDebug, "Cron Callback")
 
     if !time.Now().After(lastPublished.Add(
         time.Duration(config.Feed.PostInterval) * time.Hour,
     )) {
-        log.Println("Skipped check outside of post interval")
+        logLvlLn(LogDebug, "Skipped check outside of post interval")
         return
     }
 
     feed, err := GetFeed()
     if err != nil {
-        log.Println("Error getting feed.", err)
+        logLvlLn(LogProd, "Error getting feed.", err)
         return
     }
 
@@ -200,7 +241,7 @@ func UpdateVisitedList(feed *gofeed.Feed, visitType uint8) {
 func QueryAllFeedItems() (*gofeed.Feed, error) {
     feed, err := GetFeed()
     if err != nil {
-        log.Println("Error getting feed.", err)
+        logLvlLn(LogProd, "Error getting feed.", err)
         return feed, err
     }
     return feed, nil
@@ -210,7 +251,7 @@ func QueryNewFeedItems() (*gofeed.Feed, []*gofeed.Item, error) {
     result := make([]*gofeed.Item, 0)
     feed, err := GetFeed()
     if err != nil {
-        log.Println("Error getting feed.", err)
+        logLvlLn(LogProd, "Error getting feed.", err)
         return feed, result, err
     }
 
@@ -223,7 +264,7 @@ func QueryNewFeedItems() (*gofeed.Feed, []*gofeed.Item, error) {
 }
 
 func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) error {
-    log.Println("Posting.",item.GUID, item.Title)
+    logLvlLn(LogDebug, "Posting.",item.GUID, item.Title)
 
     var body string = ""
     for _, link := range item.Links {
@@ -239,10 +280,10 @@ func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) error {
 
     postMsg, err := dg.ForumThreadStart(config.DiscordServer.PostChannelID,title,config.DiscordMsg.ArchiveDuration,body)
     if err != nil {
-        log.Println("Error making ForumThread post.", err, title)
+        logLvlLn(LogProd, "Error making ForumThread post.", err, title)
         return err
     }
-    log.Printf("Created ForumThread post. '%s' [%s] (%s)", title, postMsg.ID, item.GUID)
+    logLvlF(LogDebug, "Created ForumThread post. '%s' [%s] (%s)", title, postMsg.ID, item.GUID)
 
     lastPublished = *item.PublishedParsed
     visitedList[item.GUID] = VisitedPosted
@@ -257,10 +298,11 @@ func PostFeedItem(feed *gofeed.Feed, item *gofeed.Item) error {
     notifyMsg, err := dg.ChannelMessageSend(config.DiscordServer.NotifyChannelID, body)
 
     if err != nil {
-        log.Println("Error sending discord notify message.",err, body)
+        logLvlLn(LogProd, "Error sending discord notify message.",err, body)
         return err
     }
-    log.Println("Created notification message", notifyMsg.ID, body)
+    logLvlLn(LogDebug, "Created notification message", notifyMsg.ID, body)
+    logLvlLn(LogProd, "Posted new episode.")
     return nil
 }
 
@@ -277,7 +319,7 @@ func InitFeed() {
         }
     }
     UpdateVisitedList(feed, VisitedInit)
-    log.Println("Added visitedList.", visitedList)
+    logLvlLn(LogDebug, "Added visitedList.", visitedList)
 }
 
 func InitScheduler() {
@@ -304,7 +346,7 @@ func InitDiscord() {
             logCmd(i.ApplicationCommandData().Name, i)
             err = h(s, i)
             if err != nil {
-                log.Println("Error "+i.ApplicationCommandData().Name, err)
+                logLvlLn(LogProd, "Error "+i.ApplicationCommandData().Name, err)
             }
         }
     })
@@ -321,13 +363,13 @@ func UpDiscord() []*discordgo.ApplicationCommand {
         }
         registeredCommands[i] = cmd
     }
-    log.Println("Registered Discord Commands")
+    logLvlLn(LogProd, "Registered Discord Commands")
     return registeredCommands
 }
 
 func DownDiscord(registeredCommands []*discordgo.ApplicationCommand) {
     if config.RemoveCommands {
-        log.Println("Removing commands...")
+        logLvlLn(LogProd, "Removing commands...")
         // // We need to fetch the commands, since deleting requires the command ID.
         // // We are doing this from the returned commands on line 375, because using
         // // this will delete all the commands, which might not be desirable, so we
@@ -565,7 +607,7 @@ func logCmd(cmd string,i *discordgo.InteractionCreate) {
     } else if i.User != nil {
         username = i.User.Username
     }
-    log.Printf("%s ran ./%s", username, cmd)
+    logLvlF(LogProd, "%s ran ./%s", username, cmd)
 }
 
 func GetFeed() (feed *gofeed.Feed, err error) {
